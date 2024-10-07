@@ -1,0 +1,56 @@
+# Build Pipeline
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      #endpoint: github
+      name: 'Salesforce Integration - NA/pipeline-templates'
+      ref: refs/heads/uat
+trigger:
+  batch: true
+  branches:
+    include:
+    - dev
+    - uat
+    - stage
+    - prod
+
+  paths:
+    exclude:
+     - azure-pipelines.yml
+variables:
+  - template: common/berlin-cicd-vars-template.yaml@templates
+    parameters:
+      MAVEN_CACHE_FOLDER: "$(Pipeline.Workspace)/.m2/repository"
+      MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+      BUSINESS_GROUP: "CRM"
+      SERVER: "anypoint-exchange-v2"
+      MULE_VERSION: "4.4.0"
+      WORKERS: "1"
+      WORKER_TYPE: "Large"
+      ENVIRONMENT: "UAT"
+      APPLICATION_NAME: "ps-sfdc-sync-int-UAT"
+      ARTIFACT_NAME: "ps-sfdc-sync-int--artifact"
+      PRIMARY_ARTIFACT_SOURCE_ALIAS: "ps-sfdc-sync-int-"
+      #MULE_ENV: "dev"
+#      APPLICATION_RUNTIME_KEY: "mulesoft12345678"
+#      APPLICATION_RUNTIME_USERNAME: "admin1"
+#      APPLICATION_RUNTIME_PASSWORD: "admin1"
+#      API_ID: "18299999"
+      USE_SELF_HOSTED_AGENT: "YES"
+      DEPLOY_TO_CLOUDHUB: "YES"
+      #ANYPOINT_PLATFORM_CLIENT_ID
+      #ANYPOINT_PLATFORM_CLIENT_SECRET
+
+
+#variables:
+#- group: Mule-Global-VG
+#- name: MAVEN_CACHE_FOLDER
+#  value: $(Pipeline.Workspace)/.m2/repository
+#- name: MAVEN_OPTS
+#  value: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)'
+
+#use Berlin Build Tenplate
+#stages:
+extends:
+  template: common/berlin-cicd-template.yaml@templates
