@@ -1,0 +1,161 @@
+parameters:
+  - name: MAVEN_CACHE_FOLDER
+    displayName: MAVEN_CACHE_FOLDER
+    type: string
+    default: any
+  - name: MAVEN_OPTS
+    displayName: MAVEN_OPTS
+    type: string
+    default: any
+  #- name: CONAPP_CLIENT_ID
+  #  displayName: CONAPP_CLIENT_ID
+  #  type: string
+  #  default: $(conapp.clientId.dev)
+  #- name: CONAPP_CLIENT_SECRET
+  #  displayName: CONAPP_CLIENT_SECRET
+  #  type: string
+  #  default: $(conapp.clientSecret.dev)
+  - name: SERVER
+    displayName: SERVER
+    type: string
+    default: any
+  - name: MULE_VERSION
+    displayName: MULE_VERSION
+    type: string
+    default: any
+  - name: BUSINESS_GROUP
+    displayName: BUSINESS_GROUP
+    type: string
+    default: any
+  - name: WORKERS
+    displayName: WORKERS
+    type: string
+    default: any
+  - name: WORKER_TYPE
+    displayName: WORKER_TYPE
+    type: string
+    default: any
+  - name: ENVIRONMENT #Design, Sandbox, Production
+    displayName: ENVIRONMENT
+    type: string
+    default: any
+  - name: APPLICATION_NAME
+    displayName: APPLICATION_NAME
+    type: string
+    default: any
+  - name: PRIMARY_ARTIFACT_SOURCE_ALIAS
+    displayName: PRIMARY_ARTIFACT_SOURCE_ALIAS
+    type: string
+    default: any
+  - name: ARTIFACT_NAME
+    displayName: ARTIFACT_NAME
+    type: string
+    default: any
+  - name: MULE_ENV # dev, uat, stage, prod  Default from Build.BranchSourceName
+    displayName: MULE_ENV
+    type: string
+    default: ''
+#  - name: APPLICATION_RUNTIME_KEY
+#    displayName: APPLICATION_RUNTIME_KEY
+#    type: string
+#    default:  $[variables.application.runtime.key] 
+#  - name: APPLICATION_RUNTIME_USERNAME
+#    displayName: APPLICATION_RUNTIME_USERNAME
+#    type: string
+#    default: any
+#  - name: APPLICATION_RUNTIME_PASSWORD
+#    displayName: APPLICATION_RUNTIME_PASSWORD
+#    type: string
+#    default: any
+#  - name: API_ID
+#    displayName: API_ID
+#    type: string
+#    default: any
+  - name: ANYPOINT_PLATFORM_GATEKEEPER
+    displayName: ANYPOINT_PLATFORM_GATEKEEPER
+    type: string
+    default: 'disabled'
+  - name: ANYPOINT_PLATFORM_CONFIG_ANALYTICS_AGENT_ENABLED
+    displayName: ANYPOINT_PLATFORM_CONFIG_ANALYTICS_AGENT_ENABLED
+    type: string
+    default: 'true'
+  - name: USE_SELF_HOSTED_AGENT
+    displayName: USE_SELF_HOSTED_AGENT
+    type: string
+    default: any
+  - name: AGENT_NAME
+    displayName: AGENT_NAME
+    type: string
+    default: any
+  - name: DEPLOY_TO_CLOUDHUB
+    displayName: DEPLOY_TO_CLOUDHUB
+    type: string
+    default: 'YES'
+  - name: AGENT_POOL
+    displayName: AGENT_POOL
+    type: string
+    default: 'SelfHostedAgentPoolDev'
+
+variables:
+#  - group: Mule-Global-VG
+  - name: MAVEN_CACHE_FOLDER
+    value: ${{ parameters.MAVEN_CACHE_FOLDER }}
+  - name: MAVEN_OPTS
+    value: ${{ parameters.MAVEN_OPTS }}
+
+  - group: ConnectedApp-VG-CRM-Dev
+  #- name: CLIENT_ID_FROM_CONN_APP
+  #  value: ${{ parameters.CONAPP_CLIENT_ID }}
+  #- name: CLIENT_SECRET_FROM_CONN_APP
+  #  value: ${{ parameters.CONAPP_CLIENT_SECRET }}
+
+  - name: isDev
+    value: $[eq(variables['Build.SourceBranch'], 'refs/heads/dev')]
+  - name: isUAT
+    value: $[eq(variables['Build.SourceBranch'], 'refs/heads/uat')]
+  - name: isStage
+    value: $[eq(variables['Build.SourceBranch'], 'refs/heads/stage')]
+  - name: isProd
+    value: $[eq(variables['Build.SourceBranch'], 'refs/heads/prod')]    
+
+  - name: SERVER
+    value: ${{ parameters.SERVER }}
+  - name: MULE_VERSION
+    value: ${{ parameters.MULE_VERSION }}
+  - name: BUSINESS_GROUP
+    value: ${{ parameters.BUSINESS_GROUP }}
+  - name: WORKERS
+    value: ${{ parameters.WORKERS }}
+  - name: WORKER_TYPE
+    value: ${{ parameters.WORKER_TYPE }}
+  - name: ENVIRONMENT
+    value: ${{ parameters.ENVIRONMENT }}
+  - name: APPLICATION_NAME
+    value: ${{ parameters.APPLICATION_NAME }}
+  - name: PRIMARY_ARTIFACT_SOURCE_ALIAS
+    value: ${{ parameters.PRIMARY_ARTIFACT_SOURCE_ALIAS }}
+  - name: ARTIFACT_NAME
+    value: ${{ parameters.ARTIFACT_NAME }}
+  - name: MULE_ENV
+    value: $(Build.SourceBranchName)
+  # value: ${{ parameters.MULE_ENV }}
+  #- name: APPLICATION_RUNTIME_KEY
+  #  value: ${{ parameters.APPLICATION_RUNTIME_KEY }}
+  #- name: APPLICATION_RUNTIME_USERNAME
+  #  value: ${{ parameters.APPLICATION_RUNTIME_USERNAME }}
+  #- name: APPLICATION_RUNTIME_PASSWORD
+  #  value: ${{ parameters.APPLICATION_RUNTIME_PASSWORD }}
+  #- name: API_ID
+  #  value: ${{ parameters.API_ID }}
+  - name: ANYPOINT_PLATFORM_GATEKEEPER
+    value: ${{ parameters.ANYPOINT_PLATFORM_GATEKEEPER }}
+  - name: ANYPOINT_PLATFORM_CONFIG_ANALYTICS_AGENT_ENABLED
+    value: ${{ parameters.ANYPOINT_PLATFORM_CONFIG_ANALYTICS_AGENT_ENABLED }}
+  - name: USE_SELF_HOSTED_AGENT
+    value: ${{ parameters.USE_SELF_HOSTED_AGENT }}
+  - name: AGENT_NAME
+    value: ${{ parameters.AGENT_NAME }}    
+  - name: DEPLOY_TO_CLOUDHUB
+    value: ${{ parameters.DEPLOY_TO_CLOUDHUB }}
+  - name: AGENT_POOL
+    value: ${{ parameters.AGENT_POOL }}    
