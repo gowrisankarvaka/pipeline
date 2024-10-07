@@ -1,0 +1,1193 @@
+# Build Pipeline 12/9/2022 x
+stages:
+
+#####################################   D E V   M S   H O S T E D  ################################
+#####################################   D E V   M S   H O S T E D  ################################
+#####################################   D E V   M S   H O S T E D  ################################
+#####################################   D E V   M S   H O S T E D  ################################
+- stage: EchoSourceBranchVariablesDev
+  condition: and(eq(variables.isDev, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'NO'))
+  jobs:
+    - job: EchoSource
+      # condition: eq(variables.isDev, 'true')
+      pool:
+        vmImage: windows-2022
+        #name: AzurePipelineAgent
+        demands: maven
+      steps:
+        - download: none
+
+          displayName: build.SourceBranch='$(Build.SourceBranch)'
+        #- script: echo Deploying to StageEnvironment variables['isStage'] ${{ variables.isStage }}
+        #  displayName: variables.isStage= ${{ variables.isStage }}
+        - script: |
+              echo "Deploying to DevEnvironment build.SourceBranch='$(Build.SourceBranch)' "
+
+- stage: RunMavenOnMSHostedMachineforDev
+  condition: and(eq(variables.isDev, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'NO'))
+  dependsOn: EchoSourceBranchVariablesDev
+  displayName: 'Run MavenAuth, Get secure settings.xml, clean package, clean test, publich Artifact - MS Hosted Agent Dev'
+  jobs:
+  - job: Maven_Build_Artifacts_Dev
+    pool:
+      vmImage: windows-2022
+      #name: SelfHostedAgentPoolStage
+      demands: maven
+    variables: 
+    - group: ConnectedApp-VG-CRM-Dev
+
+    steps:
+      - task: MavenAuthenticate@0
+        displayName: Authenticate Maven
+        inputs:
+          artifactsFeeds: "Berlin"
+
+      # Download settings.xml file
+      - task: DownloadSecureFile@1
+        name: settingsxml
+        #displayName: 'Download Maven settings'
+        displayName: Download Secure Settings file
+        inputs:
+          secureFile: 'settings.xml'
+
+      - task: PowerShell@2
+        displayName: Copy settings.xml file to m2 folder
+        inputs:
+          targetType: 'inline'
+          script: |
+            New-Item -Type Directory -Force "${HOME}/.m2"
+            Copy-Item -Force "$(settingsxml.secureFilePath)" "${HOME}/.m2/settings.xml"
+            $file = "$(Pipeline.Workspace)" 
+            echo '$file=' $file
+            # Copy-Item -Force "$(settingsxml.secureFilePath)" "$file"
+            Copy-Item "$(settingsxml.secureFilePath)" -Destination "$file"
+      - task: Cache@2
+        inputs:
+          key: 'maven | "$(Agent.OS)" | **/pom.xml'
+          restoreKeys: |
+            maven | "$(Agent.OS)"
+            maven
+          path: $(MAVEN_CACHE_FOLDER)
+        displayName: Cache Maven local repo
+
+      #- script: 'wget https://www-eu.apache.org/dist/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip'
+      #
+      #- task: ExtractFiles@1
+      #  inputs:
+      #      archiveFilePatterns: 'apache-maven-3.6.3-bin.zip'
+      #      destinationFolder: '$(build.sourcesdirectory)/maven'
+
+      - task: Maven@3
+        inputs:
+          mavenPomFile: 'pom.xml'
+          mavenVersionOption: 3.8.7
+          options: '-DskipTests=true -DattachMuleSources'
+          goals: 'clean package'
+          mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+          
+      - task: PublishPipelineArtifact@1
+        displayName: 'Create $(ARTIFACT_NAME)-DEV'
+        inputs:
+          artifact: '$(ARTIFACT_NAME)-DEV'
+          
+          
+      - task: Maven@3
+        displayName: MUnits
+        inputs:
+          mavenPomFile: 'pom.xml'
+          mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+          goals: 'clean test'
+          options: '-Dmule.env=dev -Dapplication.runtime.key="$(application.runtime.key.dev)"' 
+
+- stage: DeployToCloudhubFromDevEnvironment
+  condition: and(eq(variables.isDev, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'NO'))
+  dependsOn: RunMavenOnMSHostedMachineforDev
+
+  displayName: Berlin Deploy to Cloudhub - Dev
+  jobs:
+    - job: Deploy_to_CloudHub_Dev
+      pool:
+        #name: SelfHostedAgentPoolStage
+        vmImage: windows-2022
+        demands: maven 
+      variables: 
+      - group: ConnectedApp-VG-CRM-Dev
+      steps:
+
+        #- task: MavenAuthenticate@0
+        #  displayName: Authenticate Maven
+        #  inputs:
+        #    artifactsFeeds: "Berlin"
+
+        # Download settings.xml file
+        - task: DownloadSecureFile@1
+          name: mvnsettings
+          displayName: 'Download Maven settings'
+          inputs:
+            secureFile: 'settings.xml'
+
+        - task: Maven@3
+          displayName: 'Deploy to CloudHub - Dev'
+          inputs:
+            mavenPomFile: 'pom.xml' 
+            #mavenPomFile: 'pom.xml'
+            #options: '-e -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(artifact.name)-DEV/s/target -DapplicationName=$(primaryArtifactSourceAlias)-DEV -DskipTests=true -Dmule.env=$(MULE_ENV) -Danypoint.platform.gatekeeper=$(ANYPOINT_PLATFORM_GATEKEEPER)  -Dserver=$(SERVER) -DmuleVersion=$(MULE_VERSION) -DbusinessGroup="$(BUSINESS_GROUP)" -Dworkers=$(WORKERS) -DworkerType=$(WORKER_TYPE) -Denvironment=$(ENVIRONMENT) -Dapplication.runtime.key="$(APPLICATION_RUNTIME_KEY)" -Dapi.id=$(API_ID)  -Danypoint.platform.client_id=$(anypoint.platform.client_id.dev) -Danypoint.platform.clientSecret=$(anypoint.platform.client_secret.dev) -Dconapp.clientId=$(conapp.clientId.dev) -Dconapp.clientSecret=$(conapp.clientSecret.dev)'
+            #options: ' -s $(agent.TempDirectory)/settings.xml -DmuleDeploy -Dartifact=$(Pipeline.Workspace)/$(artifact.name)-DEV/s/target -DapplicationName=$(primaryArtifactSourceAlias)-DEV -DskipTests=true -Dmule.env=$(MULE_ENV) -Danypoint.platform.gatekeeper=$(ANYPOINT_PLATFORM_GATEKEEPER)  -Dserver=$(SERVER) -DmuleVersion=$(MULE_VERSION) -DbusinessGroup="$(BUSINESS_GROUP)" -Dworkers=$(WORKERS) -DworkerType=$(WORKER_TYPE) -Denvironment=$(ENVIRONMENT) -Dapplication.runtime.key="$(APPLICATION_RUNTIME_KEY)" -Dapi.id=$(API_ID)  -Danypoint.platform.client_id=$(anypoint.platform.client_id.dev) -Danypoint.platform.clientSecret=605CDBEc716043c79A27723193678B51 -Dconapp.clientId=346e934f074946d79b16b02b21b31983 -Dconapp.clientSecret=FA9ae01Ae1314d128B7103EF81cD9905)'
+            #options: ' -s $(Agent.TempDirectory)/settings.xml -DmuleDeploy -Dartifact=$(Pipeline.Workspace)/$(artifact.name)-DEV/s/target -DapplicationName=$(primaryArtifactSourceAlias)-DEV -DskipTests=true -Dmule.env=$(MULE_ENV) -Danypoint.platform.gatekeeper=$(ANYPOINT_PLATFORM_GATEKEEPER)  -Dserver=$(SERVER) -DmuleVersion=$(MULE_VERSION) -DbusinessGroup="$(BUSINESS_GROUP)" -Dworkers=$(WORKERS) -DworkerType=$(WORKER_TYPE) -Denvironment=$(ENVIRONMENT) -Dapplication.runtime.key="$(APPLICATION_RUNTIME_KEY)" -Dapi.id=$(API_ID)  -Danypoint.platform.client_id="$(ANYPOINT_PLATFORM_CLIENT_ID_DEV)" -Danypoint.platform.client_secret="$(ANYPOINT_PLATFORM_CLIENT_SECRET_DEV)" -Dconapp.clientId="$(CONAPP_CLIENTID_DEV)" -Dconapp.clientSecret="$(CONAPP_CLIENTSECRET_DEV)"'
+            options: ' -s $(Agent.TempDirectory)/settings.xml -DmuleDeploy -Dartifact=$(Pipeline.Workspace)/$(ARTIFACT_NAME)-DEV/s/target -DapplicationName=$(PRIMARY_ARTIFACT_SOURCE_ALIAS)-DEV -DskipTests=true -Dmule.env=dev -Danypoint.platform.gatekeeper=$(ANYPOINT_PLATFORM_GATEKEEPER)  -Dserver=$(SERVER) -DmuleVersion=$(MULE_VERSION) -DbusinessGroup="$(BUSINESS_GROUP)" -Dworkers=$(WORKERS) -DworkerType=$(WORKER_TYPE) -Denvironment=$(ENVIRONMENT) -Danypoint.platform.client_id=$(anypoint.platform.client_id.dev) -Danypoint.platform.client_secret=$(anypoint.platform.client_secret.dev) -Dapplication.runtime.key=$(application.runtime.key.dev) -Dapplication.runtime.username=$(application.runtime.username.dev) -Dapplication.runtime.password=$(application.runtime.password.dev) -Dconapp.clientId=$(conapp.clientId.dev) -Dconapp.clientSecret=$(conapp.clientSecret.dev)'
+            #mavenVersionOption: 'path' # 'Default' # Options: default, path
+            #mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+            #mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+            #mavenFeedAuthenticate: false
+            #effectivePomSkip: false
+            #javaHomeOption: path # 'JDKVersion'
+            #jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+            #jdkVersionOption: '1.8'
+            #jdkArchitectureOption: 'x64'
+            #publishJUnitResults: false
+            #testResultsFiles: '**/surefire-reports/TEST-*.xml' #'**/TEST-*.xml'
+            goals: 'package deploy'
+
+#####################################   D E V    S E L F    H O S T E D  ################################
+#####################################   D E V    S E L F    H O S T E D  ################################
+#####################################   D E V    S E L F    H O S T E D  ################################
+#####################################   D E V    S E L F    H O S T E D  ################################
+
+- stage: EchoSourceBranchVariablesDevSELFHOSTED
+  condition: and(eq(variables.isDev, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'YES'))
+
+  jobs:
+    - job: EchoSource
+      condition: eq(variables.isDev, 'true')
+      pool:
+        name: $(AGENT_POOL)
+        demands: maven
+
+      steps:
+        - download: none
+
+        #- task: MavenAuthenticate@0
+        #  displayName: Authenticate Maven
+        #  inputs:
+        #    artifactsFeeds: "Berlin"
+
+        - script: |
+            echo This script could use $SYSTEM_ACCESSTOKEN
+            echo "$env:SYSTEM_ACCESSTOKEN = $(System.AccessToken)"
+
+            echo "Deploying to DevEnvironment build.SourceBranch='$(Build.SourceBranch)' "
+            echo "Deploying to DevEnvironment BG='$(BUSINESS_GROUP)'"
+            echo "Deploying to DevEnvironment conapp.clientSecret='$(conapp.clientSecret)'"
+            echo "Deploying to DevEnvironment conapp.clientId='$(conapp.clientID)' "
+            echo "Deploying to DevEnvironment API_ID = $(API_ID)"
+            echo "Deploying to DevEnvironment ANYPOINT_PLATFORM_GATEKEEPER = $(ANYPOINT_PLATFORM_GATEKEEPER)"
+            echo "Deploying to DevEnvironment ANYPOINT_PLATFORM_CLIENT_SECRET_DEV = $(ANYPOINT_PLATFORM_CLIENT_SECRET_DEV)"
+            echo "Deploying to DevEnvironment ANYPOINT_PLATFORM_CLIENT_ID_DEV = $(ANYPOINT_PLATFORM_CLIENT_ID_DEV)"
+            echo "Deploying to DevEnvironment MULE_ENV = $(MULE_ENV)"
+            echo "Deploying to DevEnvironment ENV = $(ENV)"
+            echo "Deploying to DevEnvironment ENVIRONMENT = $(ENVIRONMENT)"
+            echo "Deploying to DevEnvironment APPLICATION_NAME = $(APPLICATION_NAME)"
+            echo "Deploying to DevEnvironment api.id = $(api.id)"
+            echo "Deploying to DevEnvironment APPLICATION_RUNTIME_KEY = $(APPLICATION_RUNTIME_KEY)"
+            echo "Deploying to DevEnvironment 'application.runtime.key' = '$(application.runtime.key.dev)'"
+            echo "Deploying to DevEnvironment application.runtime.key = $(application.runtime.key)"
+            echo "Deploying to DevEnvironment application.runtime.client_id = '$(application.runtime.client_id.dev)'"
+            echo "Deploying to DevEnvironment application.runtime.client_secret = '$(application.runtime.client_secret.dev)'"
+            echo "Deploying to DevEnvironment http.certificate.path = '$(http.certificate.path)'"
+
+ 
+- stage: RunMavenOnSelfHostedMachineforDEV
+  dependsOn: EchoSourceBranchVariablesDevSELFHOSTED
+  condition: and(eq(variables.isDev, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'YES'))
+  displayName: 'Self Hosted Agent Dev - Run MavenAuth, Get secure settings.xml, clean package, clean test, publish Artifact'
+  jobs:
+  - job: Maven_Build_Artifacts_DEV
+    pool:
+      name: $(AGENT_POOL)
+      demands: maven
+    variables: 
+    - group: ConnectedApp-VG-CRM-Dev
+
+    steps:
+      - task: MavenAuthenticate@0
+        displayName: Authenticate Maven
+        inputs:
+          artifactsFeeds: "Berlin"
+          
+      # Download settings.xml file
+#      - task: DownloadSecureFile@1
+#        name: mvnsettings
+#        displayName: 'Download Maven settings'
+#        inputs:
+#          secureFile: 'settings.xml'
+
+      - task: Maven@3
+        displayName: MavenCleanPackage
+        inputs:
+          mavenPomFile: 'pom.xml'
+          options: '-DskipTests=true -DattachMuleSources -e' # -e -X   
+          mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+          mavenVersionOption: 'path' # 'Default' # Options: default, path
+#          mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+          #mavenDirectory: 'e:\Program Files\Maven\apache-maven-3.8.7\bin\' # Required when mavenVersionOption == Path
+          mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+          mavenFeedAuthenticate: false
+          effectivePomSkip: false
+          javaHomeOption: path # 'JDKVersion'
+#          jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+          jdkDirectory: 'e:\Program Files\Java\jdk-11'
+          #jdkVersionOption: '1.11'
+          jdkArchitectureOption: 'x64'
+          publishJUnitResults: false
+          testResultsFiles: '**/surefire-reports/TEST-*.xml' #'**/TEST-*.xml'
+          goals: 'clean package'          
+
+      - task: Maven@3
+        displayName: MUnit
+        inputs:
+          mavenPomFile: 'pom.xml'
+          options: '-DskipTests=true -DattachMuleSources ' # -e -X
+          mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+          mavenVersionOption: 'path' # 'Default' # Options: default, path
+#          mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+          #mavenDirectory: 'e:\Program Files\Maven\apache-maven-3.8.7\bin\' # Required when mavenVersionOption == Path
+          mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+          mavenFeedAuthenticate: false
+          effectivePomSkip: false
+          javaHomeOption: path # 'JDKVersion'
+          jdkDirectory: 'e:\Program Files\Java\jdk-11'
+          #jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+          #jdkVersionOption: '1.8'
+          jdkArchitectureOption: 'x64'
+          publishJUnitResults: false
+          testResultsFiles: '**/surefire-reports/TEST-*.xml' #'**/TEST-*.xml'
+          goals: 'clean test'          
+
+      - task: PublishPipelineArtifact@1
+        displayName: 'Create $(ARTIFACT_NAME)-DEV'
+        inputs:
+          artifact: '$(ARTIFACT_NAME)-DEV'
+
+
+- stage: DeployToCloudhubFromDEVEnvironmentSelfHosted
+  condition: and(eq(variables.isDev, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'YES'), eq(variables.DEPLOY_TO_CLOUDHUB, 'YES'))
+  dependsOn: RunMavenOnSelfHostedMachineforDEV
+  #condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/dev'))
+
+  displayName: Berlin Deploy to DEV Cloudhub
+  variables: 
+  - group: ConnectedApp-VG-CRM-Dev
+  jobs:
+    - job: Deploy_to_CloudHub_DEV
+      pool:
+        name: $(AGENT_POOL)
+        demands: maven
+      steps:
+
+        - task: MavenAuthenticate@0
+          displayName: Authenticate Maven
+          inputs:
+            artifactsFeeds: "Berlin"
+
+            # Download settings.xml file
+        - task: DownloadSecureFile@1
+          name: mvnSettings
+          displayName: 'Download Maven settings'
+          inputs:
+            secureFile: 'settings.xml'
+
+            #- task: PublishPipelineArtifact@1
+            #  displayName: '$(artifact.name)-STAGE'
+            #  inputs:
+            #    artifact: '$(artifact.name)-STAGE'
+
+        - task: Maven@3
+          displayName: Deploy
+          inputs:
+            mavenPomFile: 'pom.xml'
+            #options: '-s $(System.DefaultWorkingDirectory)/$(Release.PrimaryArtifactSourceAlias)/$(Release.PrimaryArtifactSourceAlias)-artifact-PROD/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(Release.PrimaryArtifactSourceAlias)/$(Release.PrimaryArtifactSourceAlias)-artifact-PROD/s/target -DskipTests=true -Dmule.env=prod -Danypoint.platform.gatekeeper=disabled -DapplicationName="$(Release.PrimaryArtifactSourceAlias)-PROD" -Dserver=$(server) -DmuleVersion=$(muleVersion) -DbusinessGroup="Application Development" -Dworkers=$(workers) -DworkerType=$(workerType) -Denvironment=$(environment) -Dapplication.runtime.key=$(encrypt.key) -Dapi.id=99999  -Danypoint.platform.client_id=$(anypoint.platform.client_id) -Danypoint.platform.client_secret=$(anypoint.platform.client_secret) -Dconapp.clientId=$(conapp.clientId) -Dconapp.clientSecret=$(conapp.clientSecret)'
+            #options: '-s $(System.DefaultWorkingDirectory)/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(artifact.name)-STAGE/s/target -DskipTests=true -Dmule.env=stage -Danypoint.platform.gatekeeper=disabled -DapplicationName="$(artifact.name)-STAGE" -Dserver=$(server) -DmuleVersion=$(muleVersion) -DbusinessGroup="Application Development" -Dworkers=$(workers) -DworkerType=$(workerType) -Denvironment=$(environment) -Dapplication.runtime.key=$(encrypt.key) -Dapi.id=99999  -Danypoint.platform.client_id=$(anypoint.platform.client_id) -Danypoint.platform.client_secret=$(anypoint.platform.client_secret) -Dconapp.clientId=$(conapp.clientId) -Dconapp.clientSecret=$(conapp.clientSecret)'
+            #options: '-s $(agent.tempDirectory)/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(ARTIFACT_NAME)-DEV/s/target -DapplicationName=$(PRIMARY_ARTIFACT_SOURCE_ALIAS)-DEV -DskipTests=true -Dmule.env=$(MULE_ENV) -Danypoint.platform.gatekeeper=$(ANYPOINT_PLATFORM_GATEKEEPER)  -Dserver=$(SERVER) -DmuleVersion=$(MULE_VERSION) -DbusinessGroup="$(BUSINESS_GROUP)" -Dworkers=$(WORKERS) -DworkerType=$(WORKER_TYPE) -Denvironment=$(ENVIRONMENT) -Dapplication.runtime.key=$(application.runtime.key) -Dapplication.runtime.username=$(application.runtime.username) -Dapplication.runtime.password=$(application.runtime.password) -Dapi.id=$(API_ID)  -Danypoint.platform.client_id=$(anypoint.platform.client_id.dev) -Danypoint.platform.clientSecret=$(anypoint.platform.client_secret.dev) -Dconapp.clientId=$(conapp.clientId.dev) -Dconapp.clientSecret=$(conapp.clientSecret.dev)'
+            options: '-s $(agent.tempDirectory)/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(ARTIFACT_NAME)-DEV/s/target -DapplicationName=$(PRIMARY_ARTIFACT_SOURCE_ALIAS)-DEV -DskipTests=true -Dmule.env=dev -Danypoint.platform.gatekeeper=$(ANYPOINT_PLATFORM_GATEKEEPER)  -Dserver=$(SERVER) -DmuleVersion=$(MULE_VERSION) -DbusinessGroup="$(BUSINESS_GROUP)" -Dworkers=$(WORKERS) -DworkerType=$(WORKER_TYPE) -Denvironment=$(ENVIRONMENT) -Danypoint.platform.client_id=$(anypoint.platform.client_id.dev) -Danypoint.platform.client_secret=$(anypoint.platform.client_secret.dev) -Dapplication.runtime.key=$(application.runtime.key.dev) -Dapplication.runtime.username=$(application.runtime.username.dev) -Dapplication.runtime.password=$(application.runtime.password.dev)  -Dconapp.clientId=$(conapp.clientId.dev) -Dconapp.clientSecret=$(conapp.clientSecret.dev) '
+            
+            mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+            mavenVersionOption: 'path' # 'Default' # Options: default, path
+            #mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+            mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+            mavenFeedAuthenticate: false
+            effectivePomSkip: false
+            javaHomeOption: path # 'JDKVersion'
+            jdkDirectory: 'e:\Program Files\Java\jdk-11'
+            #jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+            #jdkVersionOption: '1.8'
+            jdkArchitectureOption: 'x64'
+            publishJUnitResults: false
+            testResultsFiles: '**/surefire-reports/TEST-*.xml' #'**/TEST-*.xml'
+            goals: ' deploy'
+          #env:
+          #  MAPPED_TOKEN: $(conapp.clientId.dev)
+
+
+
+
+#####################################   D E V    S E L F    H O S T E D   S E R V I C E    C O N N E C T I O N ################################
+#####################################   D E V    S E L F    H O S T E D   S E R V I C E    C O N N E C T I O N ################################
+#####################################   D E V    S E L F    H O S T E D   S E R V I C E    C O N N E C T I O N ################################
+#####################################   D E V    S E L F    H O S T E D   S E R V I C E    C O N N E C T I O N ################################
+
+- stage: EchoSourceBranchVariablesDevSELFHOSTED_SC
+  condition: and(eq(variables.isDev, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'YESSC'))
+
+  jobs:
+    - job: EchoSource
+      condition: eq(variables.isDev, 'true')
+      pool:
+        name: $(AGENT_POOL)
+        demands: maven
+
+      steps:
+        - download: none
+
+        - task: MavenAuthenticate@0
+          displayName: Authenticate Maven
+          inputs:
+            artifactsFeeds: "Berlin"
+            mavenServiceConnections: 'anypoint-exchange-v2'
+
+        - script: |
+            echo This script could use $SYSTEM_ACCESSTOKEN
+            echo "$env:SYSTEM_ACCESSTOKEN = $(System.AccessToken)"
+
+            echo "Deploying to DevEnvironment build.SourceBranch='$(Build.SourceBranch)' "
+            echo "Deploying to DevEnvironment BG='$(BUSINESS_GROUP)'"
+            echo "Deploying to DevEnvironment conapp.clientSecret='$(conapp.clientSecret)'"
+            echo "Deploying to DevEnvironment conapp.clientId='$(conapp.clientID)' "
+            echo "Deploying to DevEnvironment API_ID = $(API_ID)"
+            echo "Deploying to DevEnvironment ANYPOINT_PLATFORM_GATEKEEPER = $(ANYPOINT_PLATFORM_GATEKEEPER)"
+            echo "Deploying to DevEnvironment ANYPOINT_PLATFORM_CLIENT_SECRET_DEV = $(ANYPOINT_PLATFORM_CLIENT_SECRET_DEV)"
+            echo "Deploying to DevEnvironment ANYPOINT_PLATFORM_CLIENT_ID_DEV = $(ANYPOINT_PLATFORM_CLIENT_ID_DEV)"
+            echo "Deploying to DevEnvironment MULE_ENV = $(MULE_ENV)"
+            echo "Deploying to DevEnvironment ENV = $(ENV)"
+            echo "Deploying to DevEnvironment ENVIRONMENT = $(ENVIRONMENT)"
+            echo "Deploying to DevEnvironment APPLICATION_NAME = $(APPLICATION_NAME)"
+            echo "Deploying to DevEnvironment api.id = $(api.id)"
+            echo "Deploying to DevEnvironment APPLICATION_RUNTIME_KEY = $(APPLICATION_RUNTIME_KEY)"
+            echo "Deploying to DevEnvironment 'application.runtime.key' = '$(application.runtime.key.dev)'"
+            echo "Deploying to DevEnvironment application.runtime.key = $(application.runtime.key)"
+            echo "Deploying to DevEnvironment application.runtime.client_id = '$(application.runtime.client_id.dev)'"
+            echo "Deploying to DevEnvironment application.runtime.client_secret = '$(application.runtime.client_secret.dev)'"
+            echo "Deploying to DevEnvironment http.certificate.path = '$(http.certificate.path)'"
+
+ 
+- stage: RunMavenOnSelfHostedMachineforDEV_SC
+  dependsOn: EchoSourceBranchVariablesDevSELFHOSTED
+  condition: and(eq(variables.isDev, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'YESSC'))
+  displayName: 'Self Hosted Agent Dev - Run MavenAuth, Get secure settings.xml, clean package, clean test, publish Artifact'
+  jobs:
+  - job: Maven_Build_Artifacts_DEV
+    pool:
+      name: $(AGENT_POOL)
+      demands: maven
+    variables: 
+    - group: ConnectedApp-VG-CRM-Dev
+
+    steps:
+      - task: MavenAuthenticate@0
+        displayName: Authenticate Maven
+        inputs:
+          artifactsFeeds: "Berlin"
+          mavenServiceConnections: 'anypoint-exchange-v2'
+          
+      # Download settings.xml file
+#      - task: DownloadSecureFile@1
+#        name: mvnsettings
+#        displayName: 'Download Maven settings'
+#        inputs:
+#          secureFile: 'settings.xml'
+
+      - task: Maven@3
+        displayName: MavenCleanPackage
+        inputs:
+          mavenPomFile: 'pom.xml'
+          options: '-DskipTests=true -DattachMuleSources -e' # -e -X   
+          mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+          mavenVersionOption: 'path' # 'Default' # Options: default, path
+#          mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+          #mavenDirectory: 'e:\Program Files\Maven\apache-maven-3.8.7\bin\' # Required when mavenVersionOption == Path
+          mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+          mavenFeedAuthenticate: false
+          effectivePomSkip: false
+          javaHomeOption: path # 'JDKVersion'
+#          jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+          jdkDirectory: 'e:\Program Files\Java\jdk-11'
+          #jdkVersionOption: '1.11'
+          jdkArchitectureOption: 'x64'
+          publishJUnitResults: false
+          testResultsFiles: '**/surefire-reports/TEST-*.xml' #'**/TEST-*.xml'
+          goals: 'clean package'          
+
+      - task: Maven@3
+        displayName: MUnit
+        inputs:
+          mavenPomFile: 'pom.xml'
+          options: '-DskipTests=true -DattachMuleSources ' # -e -X
+          mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+          mavenVersionOption: 'path' # 'Default' # Options: default, path
+#          mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+          #mavenDirectory: 'e:\Program Files\Maven\apache-maven-3.8.7\bin\' # Required when mavenVersionOption == Path
+          mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+          mavenFeedAuthenticate: false
+          effectivePomSkip: false
+          javaHomeOption: path # 'JDKVersion'
+          jdkDirectory: 'e:\Program Files\Java\jdk-11'
+          #jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+          #jdkVersionOption: '1.8'
+          jdkArchitectureOption: 'x64'
+          publishJUnitResults: false
+          testResultsFiles: '**/surefire-reports/TEST-*.xml' #'**/TEST-*.xml'
+          goals: 'clean test'          
+
+      - task: PublishPipelineArtifact@1
+        displayName: 'Create $(ARTIFACT_NAME)-DEV'
+        inputs:
+          artifact: '$(ARTIFACT_NAME)-DEV'
+
+
+- stage: DeployToCloudhubFromDEVEnvironmentSelfHosted_SC
+  condition: and(eq(variables.isDev, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'YESSC'), eq(variables.DEPLOY_TO_CLOUDHUB, 'YES'))
+  dependsOn: RunMavenOnSelfHostedMachineforDEV
+  #condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/dev'))
+
+  displayName: Berlin Deploy to DEV Cloudhub
+  variables: 
+  - group: ConnectedApp-VG-CRM-Dev
+  jobs:
+    - job: Deploy_to_CloudHub_DEV
+      pool:
+        name: $(AGENT_POOL)
+        demands: maven
+      steps:
+
+        - task: MavenAuthenticate@0
+          displayName: Authenticate Maven
+          inputs:
+            artifactsFeeds: "Berlin"
+
+            # Download settings.xml file
+        - task: DownloadSecureFile@1
+          name: mvnSettings
+          displayName: 'Download Maven settings'
+          inputs:
+            secureFile: 'settings.xml'
+
+            #- task: PublishPipelineArtifact@1
+            #  displayName: '$(artifact.name)-STAGE'
+            #  inputs:
+            #    artifact: '$(artifact.name)-STAGE'
+
+        - task: Maven@3
+          displayName: Deploy
+          inputs:
+            mavenPomFile: 'pom.xml'
+            #options: '-s $(System.DefaultWorkingDirectory)/$(Release.PrimaryArtifactSourceAlias)/$(Release.PrimaryArtifactSourceAlias)-artifact-PROD/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(Release.PrimaryArtifactSourceAlias)/$(Release.PrimaryArtifactSourceAlias)-artifact-PROD/s/target -DskipTests=true -Dmule.env=prod -Danypoint.platform.gatekeeper=disabled -DapplicationName="$(Release.PrimaryArtifactSourceAlias)-PROD" -Dserver=$(server) -DmuleVersion=$(muleVersion) -DbusinessGroup="Application Development" -Dworkers=$(workers) -DworkerType=$(workerType) -Denvironment=$(environment) -Dapplication.runtime.key=$(encrypt.key) -Dapi.id=99999  -Danypoint.platform.client_id=$(anypoint.platform.client_id) -Danypoint.platform.client_secret=$(anypoint.platform.client_secret) -Dconapp.clientId=$(conapp.clientId) -Dconapp.clientSecret=$(conapp.clientSecret)'
+            #options: '-s $(System.DefaultWorkingDirectory)/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(artifact.name)-STAGE/s/target -DskipTests=true -Dmule.env=stage -Danypoint.platform.gatekeeper=disabled -DapplicationName="$(artifact.name)-STAGE" -Dserver=$(server) -DmuleVersion=$(muleVersion) -DbusinessGroup="Application Development" -Dworkers=$(workers) -DworkerType=$(workerType) -Denvironment=$(environment) -Dapplication.runtime.key=$(encrypt.key) -Dapi.id=99999  -Danypoint.platform.client_id=$(anypoint.platform.client_id) -Danypoint.platform.client_secret=$(anypoint.platform.client_secret) -Dconapp.clientId=$(conapp.clientId) -Dconapp.clientSecret=$(conapp.clientSecret)'
+            #options: '-s $(agent.tempDirectory)/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(ARTIFACT_NAME)-DEV/s/target -DapplicationName=$(PRIMARY_ARTIFACT_SOURCE_ALIAS)-DEV -DskipTests=true -Dmule.env=$(MULE_ENV) -Danypoint.platform.gatekeeper=$(ANYPOINT_PLATFORM_GATEKEEPER)  -Dserver=$(SERVER) -DmuleVersion=$(MULE_VERSION) -DbusinessGroup="$(BUSINESS_GROUP)" -Dworkers=$(WORKERS) -DworkerType=$(WORKER_TYPE) -Denvironment=$(ENVIRONMENT) -Dapplication.runtime.key=$(application.runtime.key) -Dapplication.runtime.username=$(application.runtime.username) -Dapplication.runtime.password=$(application.runtime.password) -Dapi.id=$(API_ID)  -Danypoint.platform.client_id=$(anypoint.platform.client_id.dev) -Danypoint.platform.clientSecret=$(anypoint.platform.client_secret.dev) -Dconapp.clientId=$(conapp.clientId.dev) -Dconapp.clientSecret=$(conapp.clientSecret.dev)'
+            options: '-s $(agent.tempDirectory)/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(ARTIFACT_NAME)-DEV/s/target -DapplicationName=$(PRIMARY_ARTIFACT_SOURCE_ALIAS)-DEV -DskipTests=true -Dmule.env=dev -Danypoint.platform.gatekeeper=$(ANYPOINT_PLATFORM_GATEKEEPER)  -Dserver=$(SERVER) -DmuleVersion=$(MULE_VERSION) -DbusinessGroup="$(BUSINESS_GROUP)" -Dworkers=$(WORKERS) -DworkerType=$(WORKER_TYPE) -Denvironment=$(ENVIRONMENT) -Danypoint.platform.client_id=$(anypoint.platform.client_id.dev) -Danypoint.platform.client_secret=$(anypoint.platform.client_secret.dev) -Dapplication.runtime.key=$(application.runtime.key.dev) -Dapplication.runtime.username=$(application.runtime.username.dev) -Dapplication.runtime.password=$(application.runtime.password.dev)  -Dconapp.clientId=$(conapp.clientId.dev) -Dconapp.clientSecret=$(conapp.clientSecret.dev) '
+            
+            mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+            mavenVersionOption: 'path' # 'Default' # Options: default, path
+            #mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+            mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+            mavenFeedAuthenticate: false
+            effectivePomSkip: false
+            javaHomeOption: path # 'JDKVersion'
+            jdkDirectory: 'e:\Program Files\Java\jdk-11'
+            #jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+            #jdkVersionOption: '1.8'
+            jdkArchitectureOption: 'x64'
+            publishJUnitResults: false
+            testResultsFiles: '**/surefire-reports/TEST-*.xml' #'**/TEST-*.xml'
+            goals: ' deploy'
+          #env:
+          #  MAPPED_TOKEN: $(conapp.clientId.dev)
+
+
+
+
+#####################################   E N D     D E V    S E L F    H O S T E D   S E R V I C E    C O N N E C T I O N ################################
+#####################################   E N D     D E V    S E L F    H O S T E D   S E R V I C E    C O N N E C T I O N ################################
+#####################################   E N D     D E V    S E L F    H O S T E D   S E R V I C E    C O N N E C T I O N ################################
+#####################################   E N D     D E V    S E L F    H O S T E D   S E R V I C E    C O N N E C T I O N ################################
+
+
+
+
+
+
+
+#- stage: CleanWorkingDirectory
+#  condition: and(eq(variables.isDev, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'YES'))
+  #dependsOn: RunMavenOnSelfHostedMachineforDEV
+
+#  displayName: Clean Agent Directory
+#  variables: 
+#  - group: ConnectedApp-VG-AppDev-Dev
+#  jobs:
+#    - job: CleanAgent
+#      pool:
+#        name: SelfHostedAgentPoolDev
+#        demands: maven
+#      steps:
+
+#        - task: PowerShell@2
+#          displayName: PowerShellCleanSgent
+#          inputs:
+#            targetType: "inline"
+#            script: Remove-Item '$(Agent.BuildDirectory)'
+
+#####################################   U A T   ################################
+#####################################   U A T   ################################
+#####################################   U A T   ################################
+#####################################   U A T   ################################
+
+- stage: RunMavenOnMSHostedMachineforUAT
+  condition: and(eq(variables.isUAT, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'NO'))
+  #dependsOn: EchoSourceBranchVariablesUAT
+  displayName: 'Run MavenAuth, Get secure settings.xml, clean package, clean test, publish Artifact - MS Hosted Agent UAT'
+  jobs:
+  - job: Maven_Build_Artifacts_UAT
+    pool:
+      vmImage: windows-2022
+      #name: SelfHostedAgentPoolStage
+      demands: maven
+    variables: 
+    - group: ConnectedApp-VG-CRM-Dev
+
+    steps:
+      - task: MavenAuthenticate@0
+        displayName: Authenticate Maven
+        inputs:
+          artifactsFeeds: "Berlin"
+
+      # Download settings.xml file
+      - task: DownloadSecureFile@1
+        name: settingsxml
+        #displayName: 'Download Maven settings'
+        displayName: Download Secure Settings file
+        inputs:
+          secureFile: 'settings.xml'
+
+      - task: PowerShell@2
+        displayName: Copy settings.xml file to m2 folder
+        inputs:
+          targetType: 'inline'
+          script: |
+            New-Item -Type Directory -Force "${HOME}/.m2"
+            Copy-Item -Force "$(settingsxml.secureFilePath)" "${HOME}/.m2/settings.xml"
+            $file = "$(Pipeline.Workspace)" 
+            echo $file
+            # Copy-Item -Force "$(settingsxml.secureFilePath)" "$file"
+            Copy-Item "$(settingsxml.secureFilePath)" -Destination "$file"
+      - task: Cache@2
+        inputs:
+          key: 'maven | "$(Agent.OS)" | **/pom.xml'
+          restoreKeys: |
+            maven | "$(Agent.OS)"
+            maven
+          path: $(MAVEN_CACHE_FOLDER)
+        displayName: Cache Maven local repo
+
+      - task: Maven@3
+        inputs:
+          mavenPomFile: 'pom.xml'
+          options: '-DskipTests=true -DattachMuleSources'
+          goals: 'clean package'
+          mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+          
+      - task: PublishPipelineArtifact@1
+        displayName: 'Create $(ARTIFACT_NAME)-UAT'
+        inputs:
+          artifact: '$(ARTIFACT_NAME)-UAT'
+          
+          
+      - task: Maven@3
+        displayName: MUnits
+        inputs:
+          mavenPomFile: 'pom.xml'
+          mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+          goals: 'clean test'
+          options: '-Dmule.env=$(MULE_ENV) -Dapplication.runtime.key=$(application.runtime.key.uat)' 
+
+- stage: DeployToCloudhubFromUATEnvironment
+  condition: and(eq(variables.isUAT, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'NO'))
+  dependsOn: RunMavenOnMSHostedMachineforUAT
+
+  displayName: Berlin Deploy to Cloudhub - UAT
+  jobs:
+    - job: Deploy_to_CloudHub_UAT
+      pool:
+        #name: SelfHostedAgentPoolStage
+        vmImage: windows-2022
+        demands: maven
+      variables: 
+      - group: ConnectedApp-VG-CRM-Dev
+      steps:
+
+        #- task: MavenAuthenticate@0
+        #  displayName: Authenticate Maven
+        #  inputs:
+        #    artifactsFeeds: "Berlin"
+
+        # Download settings.xml file
+        - task: DownloadSecureFile@1
+          name: mvnsettings
+          displayName: 'Download Maven settings'
+          inputs:
+            secureFile: 'settings.xml'
+
+        - task: Maven@3
+          displayName: Deploy
+          inputs:
+            mavenPomFile: 'pom.xml' 
+            options: ' -s $(Agent.TempDirectory)/settings.xml -DmuleDeploy -Dartifact=$(Pipeline.Workspace)/$(ARTIFACT_NAME)-UAT/s/target -DapplicationName=$(PRIMARY_ARTIFACT_SOURCE_ALIAS)-UAT -DskipTests=true -Dmule.env=uat -Danypoint.platform.gatekeeper=$(ANYPOINT_PLATFORM_GATEKEEPER)  -Dserver=$(SERVER) -DmuleVersion=$(MULE_VERSION) -DbusinessGroup="$(BUSINESS_GROUP)" -Dworkers=$(WORKERS) -DworkerType=$(WORKER_TYPE) -Denvironment=$(ENVIRONMENT) -Danypoint.platform.client_id=$(anypoint.platform.client_id.uat) -Danypoint.platform.client_secret=$(anypoint.platform.client_secret.uat) -Dapplication.runtime.key=$(application.runtime.key.uat) -Dapplication.runtime.username=$(application.runtime.username.uat) -Dapplication.runtime.password=$(application.runtime.password.uat) -Dconapp.clientId="$(conapp.clientId.uat)" -Dconapp.clientSecret="$(conapp.clientSecret.uat)"'
+            goals: 'package deploy'
+
+
+#####################################   U A T    S E L F    H O S T E D  ################################
+#####################################   U A T    S E L F    H O S T E D  ################################
+#####################################   U A T    S E L F    H O S T E D  ################################
+#####################################   U A T    S E L F    H O S T E D  ################################
+
+- stage: RunMavenOnSelfHostedMachineforUAT
+  condition: and(eq(variables.isUAT, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'YES'))
+  displayName: 'Self Hosted UAT - Run MavenAuth, Get secure settings.xml, clean package, clean test, publish Artifact'
+  jobs:
+  - job: Maven_Build_Artifacts_UAT
+    pool:
+      name: SelfHostedAgentPoolUAT
+      demands: maven
+    variables: 
+    - group: ConnectedApp-VG-CRM-Dev
+
+    steps:
+      - task: MavenAuthenticate@0
+        displayName: Authenticate Maven
+        inputs:
+          artifactsFeeds: "Berlin"
+          
+      # Download settings.xml file
+      - task: DownloadSecureFile@1
+        name: mvnsettings
+        displayName: 'Download Maven settings'
+        inputs:
+          secureFile: 'settings.xml'
+
+      - task: Maven@3
+        displayName: MavenCleanPackage
+        inputs:
+          mavenPomFile: 'pom.xml'
+          options: '-DskipTests=true -DattachMuleSources ' # -e -X   
+          mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+          mavenVersionOption: 'path' # 'Default' # Options: default, path
+#          mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+          #mavenDirectory: 'e:\Program Files\Maven\apache-maven-3.8.7\bin\' # Required when mavenVersionOption == Path
+          mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+          mavenFeedAuthenticate: false
+          effectivePomSkip: false
+          javaHomeOption: path # 'JDKVersion'
+#          jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+          jdkDirectory: 'e:\Program Files\Java\jdk-11'
+          #jdkVersionOption: '1.8'
+          jdkArchitectureOption: 'x64'
+          publishJUnitResults: false
+          testResultsFiles: '**/surefire-reports/TEST-*.xml' #'**/TEST-*.xml'
+          goals: 'clean package'          
+
+      - task: Maven@3
+        displayName: MUnit
+        inputs:
+          mavenPomFile: 'pom.xml'
+          options: '-DskipTests=true -DattachMuleSources ' # -e -X
+          mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+          mavenVersionOption: 'path' # 'Default' # Options: default, path
+#          mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+          #mavenDirectory: 'e:\Program Files\Maven\apache-maven-3.8.7\bin\' # Required when mavenVersionOption == Path
+          mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+          mavenFeedAuthenticate: false
+          effectivePomSkip: false
+          javaHomeOption: path # 'JDKVersion'
+          jdkDirectory: 'e:\Program Files\Java\jdk-11'
+          #jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+          #jdkVersionOption: '1.8'
+          jdkArchitectureOption: 'x64'
+          publishJUnitResults: false
+          testResultsFiles: '**/surefire-reports/TEST-*.xml' #'**/TEST-*.xml'
+          goals: 'clean test'          
+
+      - task: PublishPipelineArtifact@1
+        displayName: 'Create $(ARTIFACT_NAME)-UAT'
+        inputs:
+          artifact: '$(ARTIFACT_NAME)-UAT'
+
+
+- stage: DeployToCloudhubUATOnSelfHosted
+  condition: and(eq(variables.isUAT, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'YES'), eq(variables.DEPLOY_TO_CLOUDHUB, 'YES'))
+  dependsOn: RunMavenOnSelfHostedMachineforUAT
+  #condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/dev'))
+
+  displayName: Self Hosted - Berlin Deploy to UAT Cloudhub
+  variables: 
+  - group: ConnectedApp-VG-CRM-Dev
+  jobs:
+    - job: Deploy_to_CloudHub_UAT
+      pool:
+        name: SelfHostedAgentPoolUAT
+        demands: maven
+      steps:
+
+        - task: MavenAuthenticate@0
+          displayName: Authenticate Maven
+          inputs:
+            artifactsFeeds: "Berlin"
+
+          # Download settings.xml file
+        - task: DownloadSecureFile@1
+          name: mvnSettings
+          displayName: 'Download Maven settings'
+          inputs:
+            secureFile: 'settings.xml'
+
+        - task: Maven@3
+          displayName: Deploy
+          inputs:
+            mavenPomFile: 'pom.xml'
+            options: '-s $(agent.tempDirectory)/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(ARTIFACT_NAME)-UAT/s/target -DapplicationName=$(PRIMARY_ARTIFACT_SOURCE_ALIAS)-UAT -DskipTests=true -Dmule.env=uat -Danypoint.platform.gatekeeper=$(ANYPOINT_PLATFORM_GATEKEEPER)  -Dserver=$(SERVER) -DmuleVersion=$(MULE_VERSION) -DbusinessGroup="$(BUSINESS_GROUP)" -Dworkers=$(WORKERS) -DworkerType=$(WORKER_TYPE) -Denvironment=$(ENVIRONMENT) -Danypoint.platform.client_id=$(anypoint.platform.client_id.uat) -Danypoint.platform.client_secret=$(anypoint.platform.client_secret.uat) -Dapplication.runtime.key=$(application.runtime.key.uat) -Dapplication.runtime.username=$(application.runtime.username.uat) -Dapplication.runtime.password=$(application.runtime.password.uat)  -Dconapp.clientId=$(conapp.clientId.uat) -Dconapp.clientSecret=$(conapp.clientSecret.uat) '
+            
+            mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+            mavenVersionOption: 'path' # 'Default' # Options: default, path
+            #mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+            mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+            mavenFeedAuthenticate: false
+            effectivePomSkip: false
+            javaHomeOption: path # 'JDKVersion'
+            jdkDirectory: 'e:\Program Files\Java\jdk-11'
+            #jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+            #jdkVersionOption: '1.8'
+            jdkArchitectureOption: 'x64'
+            publishJUnitResults: false
+            testResultsFiles: '**/surefire-reports/TEST-*.xml' #'**/TEST-*.xml'
+            goals: ' deploy'
+          #env:
+          #  MAPPED_TOKEN: $(conapp.clientId.dev)
+
+
+
+#####################################   S  T  A  G  E   ################################
+#####################################   S  T  A  G  E   ################################
+#####################################   S  T  A  G  E   ################################
+#####################################   S  T  A  G  E   ################################
+
+- stage: EchoSourceBranchVariablesStage
+  condition: and(eq(variables.isStage, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'YES'))
+  jobs:
+    - job: EchoSource
+      condition: and(eq(variables.isStage, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'YES'))
+      #condition: and(succeeded(), eq( ${{ Build.SourceBranch }} , 'refs/heads/stage')) 
+      pool:
+        name: SelfHostedAgentPoolStage
+        demands: maven
+      steps:
+        - download: none
+        - script: echo Deploying to ProdEnvironment build.SourceBranch='$(Build.SourceBranch)' BG='$(BUSINESS_GROUP)' conapp.clientId='$(conapp.clientId)'
+        - script: echo Deploying to ProdEnvironment build.SourceBranch='$(Build.SourceBranch)' BG='$(BUSINESS_GROUP)' conapp.clientSecret='$(conapp.clientSecret)'
+
+        - task: MavenAuthenticate@0
+          displayName: Authenticate Maven
+          inputs:
+            artifactsFeeds: 'Berlin'
+
+        # Download settings.xml file
+        - task: DownloadSecureFile@1
+          name: mvnSettings
+          displayName: 'Download Maven settings'
+          inputs:
+            secureFile: 'settings.xml'
+
+                
+- stage: RunMavenOnSelfHostedMachineforStage
+  condition: and(eq(variables.isStage, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'YES'))
+  dependsOn: EchoSourceBranchVariablesStage
+  displayName: 'Run MavenAuth, Get secure settings.xml, clean package, clean test, publish Artifact - Self Hosted Agent '  
+  jobs:
+    - job: Maven_Build_Artifacts_Stage
+      pool:
+        name: SelfHostedAgentPoolStage
+        demands: maven
+      steps:
+#  pool:
+#    name: SelfHostedAgentPool
+#    demands: maven
+#  jobs:
+#    - job: Maven 
+#      condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/prod'))
+#      steps:
+
+        - task: MavenAuthenticate@0
+          displayName: Authenticate Maven
+          inputs:
+            artifactsFeeds: "Berlin"
+
+        # Download settings.xml file
+        - task: DownloadSecureFile@1
+          name: mvnSettings
+          displayName: 'Download Maven settings'
+          inputs:
+            secureFile: 'settings.xml'
+
+
+        - task: Maven@3
+          displayName: MavenCleanPackage
+          inputs:
+            mavenPomFile: 'pom.xml'
+            options: '-DskipTests=true -DattachMuleSources -e'
+            mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+            mavenVersionOption: 'path' # 'Default' # Options: default, path
+            mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+            mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+            mavenFeedAuthenticate: false
+            javaHomeOption: path # 'JDKVersion'
+            jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+            #jdkVersionOption: '1.8'
+            jdkArchitectureOption: 'x64'
+            publishJUnitResults: false
+            testResultsFiles: '**/TEST-*.xml'
+            goals: 'clean package'          
+
+        - task: PublishPipelineArtifact@1
+          displayName: '$(ARTIFACT_NAME)-STAGE'
+          inputs:
+            artifact: '$(ARTIFACT_NAME)-STAGE'
+
+        - task: Maven@3
+          displayName: MUnit
+          inputs:
+            mavenPomFile: 'pom.xml'
+            options: '-DskipTests=true -DattachMuleSources'
+            mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+            mavenVersionOption: 'path' # 'Default' # Options: default, path
+            mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+            mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+            mavenFeedAuthenticate: false
+            javaHomeOption: path # 'JDKVersion'
+            jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+            #jdkVersionOption: '1.8'
+            jdkArchitectureOption: 'x64'
+            publishJUnitResults: false
+            testResultsFiles: '**/TEST-*.xml'
+            goals: 'clean test'          
+            
+- stage: DeployToCloudhubStageFromSelfHostedVM
+  condition: and(eq(variables.isStage, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'YES'))
+  dependsOn: RunMavenOnSelfHostedMachineforStage
+  displayName: Berlin Deploy to Stage CloudHub
+  variables: 
+  - group: ConnectedApp-VG-CRM-Dev
+  jobs:
+  - deployment: DeployStage
+    pool: 
+      name: SelfHostedAgentPoolStage
+
+    environment: Stage
+##  - job: publishinternala
+##    displayName: 'Publish packages to Prod Azure environemtn'
+##    environment: 'Production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+#            - download: none
+            - script: echo Deploying to ProductionEnvironment '$(BUSINESS_GROUP)' '$(conapp.clientId)'
+
+            # Download settings.xml file
+            - task: DownloadSecureFile@1
+              name: mvnSettings
+              displayName: 'Download Maven settings'
+              inputs:
+                secureFile: 'settings.xml'
+
+            - task: Maven@3
+              displayName: Deploy
+              inputs:
+                mavenPomFile: 'pom.xml'
+                #options: '-s $(System.DefaultWorkingDirectory)/$(Release.PrimaryArtifactSourceAlias)/$(Release.PrimaryArtifactSourceAlias)-artifact-PROD/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(Release.PrimaryArtifactSourceAlias)/$(Release.PrimaryArtifactSourceAlias)-artifact-PROD/s/target -DskipTests=true -Dmule.env=prod -Danypoint.platform.gatekeeper=disabled -DapplicationName="$(Release.PrimaryArtifactSourceAlias)-PROD" -Dserver=$(server) -DmuleVersion=$(muleVersion) -DbusinessGroup="Application Development" -Dworkers=$(workers) -DworkerType=$(workerType) -Denvironment=$(environment) -Dapplication.runtime.key=$(encrypt.key) -Dapi.id=99999  -Danypoint.platform.client_id=$(anypoint.platform.client_id) -Danypoint.platform.client_secret=$(anypoint.platform.client_secret) -Dconapp.clientId=$(conapp.clientId) -Dconapp.clientSecret=$(conapp.clientSecret)'
+                #options: '-s $(System.DefaultWorkingDirectory)/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(artifact.name)-STAGE/s/target -DskipTests=true -Dmule.env=stage -Danypoint.platform.gatekeeper=disabled -DapplicationName="$(artifact.name)-STAGE" -Dserver=$(server) -DmuleVersion=$(muleVersion) -DbusinessGroup="Application Development" -Dworkers=$(workers) -DworkerType=$(workerType) -Denvironment=$(environment) -Dapplication.runtime.key=$(encrypt.key) -Dapi.id=99999  -Danypoint.platform.client_id=$(anypoint.platform.client_id) -Danypoint.platform.client_secret=$(anypoint.platform.client_secret) -Dconapp.clientId=$(conapp.clientId) -Dconapp.clientSecret=$(conapp.clientSecret)'
+                options: '-s $(agent.tempDirectory)/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(ARTIFACT_NAME)-STAGE/s/target -DapplicationName=$(PRIMARY_ARTIFACT_SOURCE_ALIAS) -DskipTests=true -Dmule.env=stage -Danypoint.platform.gatekeeper=$(ANYPOINT_PLATFORM_GATEKEEPER)  -Dserver=$(SERVER) -DmuleVersion=$(MULE_VERSION) -DbusinessGroup="$(BUSINESS_GROUP)" -Dworkers=$(WORKERS) -DworkerType=$(WORKER_TYPE) -Denvironment=$(ENVIRONMENT) -Dapplication.runtime.key=$(application.runtime.key) -Dapplication.runtime.username=$(application.runtime.username) -Dapplication.runtime.password=$(application.runtime.password) -Dconapp.clientId=$(conapp.clientId.dev) -Dconapp.clientSecret=$(conapp.clientSecret.dev)'
+                mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+                mavenVersionOption: 'path' # 'Default' # Options: default, path
+                mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+                mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+                mavenFeedAuthenticate: false
+                javaHomeOption: path # 'JDKVersion'
+                jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+                #jdkVersionOption: '1.8'
+                jdkArchitectureOption: 'x64'
+                publishJUnitResults: false
+                testResultsFiles: '**/TEST-*.xml'
+                goals: 'package deploy'
+
+
+
+#####################################   stage temp  ################################
+
+- stage: RunMavenOnMSHostedMachineforStage
+  condition: and(eq(variables.isStage, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'NO'))
+  #dependsOn: EchoSourceBranchVariablesUAT
+  displayName: 'Run MavenAuth, Get secure settings.xml, clean package, clean test, publish Artifact - MS Hosted Agent Stage'
+  jobs:
+  - job: Maven_Build_Artifacts_Stage
+    pool:
+      vmImage: windows-2022
+      #name: SelfHostedAgentPoolStage
+      demands: maven
+    steps:
+      - task: MavenAuthenticate@0
+        displayName: Authenticate Maven
+        inputs:
+          artifactsFeeds: "Berlin"
+
+      # Download settings.xml file
+      - task: DownloadSecureFile@1
+        name: settingsxml
+        #displayName: 'Download Maven settings'
+        displayName: Download Secure Settings file
+        inputs:
+          secureFile: 'settings.xml'
+
+      - task: PowerShell@2
+        displayName: Copy settings.xml file to m2 folder
+        inputs:
+          targetType: 'inline'
+          script: |
+            New-Item -Type Directory -Force "${HOME}/.m2"
+            Copy-Item -Force "$(settingsxml.secureFilePath)" "${HOME}/.m2/settings.xml"
+            $file = "$(Pipeline.Workspace)" 
+            echo $file
+            # Copy-Item -Force "$(settingsxml.secureFilePath)" "$file"
+            Copy-Item "$(settingsxml.secureFilePath)" -Destination "$file"
+      - task: Cache@2
+        inputs:
+          key: 'maven | "$(Agent.OS)" | **/pom.xml'
+          restoreKeys: |
+            maven | "$(Agent.OS)"
+            maven
+          path: $(MAVEN_CACHE_FOLDER)
+        displayName: Cache Maven local repo
+
+      - task: Maven@3
+        inputs:
+          mavenPomFile: 'pom.xml'
+          options: '-DskipTests=true -DattachMuleSources'
+          goals: 'clean package'
+          mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+          
+      - task: PublishPipelineArtifact@1
+        displayName: 'Create $(ARTIFACT_NAME)-STAGE'
+        inputs:
+          artifact: '$(ARTIFACT_NAME)-STAGE'
+          
+          
+      - task: Maven@3
+        displayName: MUnits
+        inputs:
+          mavenPomFile: 'pom.xml'
+          mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+          goals: 'clean test'
+          options: '-Dmule.env=$(MULE_ENV) -Dapplication.runtime.key="$(application.runtime.key.dev)"' 
+
+- stage: DeployToCloudhubFromStageEnvironment
+  condition: and(eq(variables.isStage, 'true'), eq(variables.USE_SELF_HOSTED_AGENT, 'NO'))
+  dependsOn: RunMavenOnMSHostedMachineforStage
+
+  displayName: Berlin Deploy to Cloudhub - Stage
+  jobs:
+    - job: Deploy_to_CloudHub_Stage
+      pool:
+        #name: SelfHostedAgentPoolStage
+        vmImage: windows-2022
+        demands: maven
+      variables: 
+      - group: ConnectedApp-VG-CRM-Dev
+      steps:
+
+        #- task: MavenAuthenticate@0
+        #  displayName: Authenticate Maven
+        #  inputs:
+        #    artifactsFeeds: "Berlin"
+
+        # Download settings.xml file
+        - task: DownloadSecureFile@1
+          name: mvnsettings
+          displayName: 'Download Maven settings'
+          inputs:
+            secureFile: 'settings.xml'
+
+        - task: Maven@3
+          displayName: Deploy
+          inputs:
+            mavenPomFile: 'pom.xml' 
+            options: ' -s $(Agent.TempDirectory)/settings.xml -DmuleDeploy -Dartifact=$(Pipeline.Workspace)/$(ARTIFACT_NAME)-STAGE/s/target -DapplicationName=$(PRIMARY_ARTIFACT_SOURCE_ALIAS)-STAGE -DskipTests=true -Dmule.env=stage -Danypoint.platform.gatekeeper=$(ANYPOINT_PLATFORM_GATEKEEPER)  -Dserver=$(SERVER) -DmuleVersion=$(MULE_VERSION) -DbusinessGroup="$(BUSINESS_GROUP)" -Dworkers=$(WORKERS) -DworkerType=$(WORKER_TYPE) -Denvironment=$(ENVIRONMENT) -Dapplication.runtime.key=$(application.runtime.key)  -Dapplication.runtime.username=$(application.runtime.username) -Dapplication.runtime.password=$(application.runtime.password) -Dconapp.clientId=$(conapp.clientId.dev) -Dconapp.clientSecret=$(conapp.clientSecret.dev)'
+            goals: 'package deploy'
+
+
+#####################################   P   R   O   D   ################################
+#####################################   P   R   O   D   ################################
+#####################################   P   R   O   D   ################################
+#####################################   P   R   O   D   ################################
+
+- stage: EchoSourceBranchVariablesProd
+  condition: eq(variables.isProd, 'true')
+  jobs:
+    - job: EchoSource
+      condition: eq(variables.isProd, 'true')
+      #condition: and(succeeded(), eq( ${{ Build.SourceBranch }} , 'refs/heads/stage')) 
+      pool:
+        name: SelfHostedAgentPool
+        demands: maven
+      steps:
+        - download: none
+        - script: echo Deploying to ProdEnvironment build.SourceBranch='$(Build.SourceBranch)' BG='$(BUSINESS_GROUP)' conapp.clientId='$(conapp.clientId)'
+        - script: echo Deploying to ProdEnvironment build.SourceBranch='$(Build.SourceBranch)' BG='$(BUSINESS_GROUP)' conapp.clientSecret='$(conapp.clientSecret)'
+
+        - task: MavenAuthenticate@0
+          displayName: Authenticate Maven
+          inputs:
+            artifactsFeeds: 'Berlin'
+
+        # Download settings.xml file
+        - task: DownloadSecureFile@1
+          name: mvnSettings
+          displayName: 'Download Maven settings'
+          inputs:
+            secureFile: 'settings.xml'
+
+                
+- stage: RunMavenOnSelfHostedMachineforProd
+  condition: eq(variables.isProd, 'true')
+  dependsOn: EchoSourceBranchVariablesProd
+  displayName: 'Run MavenAuth, Get secure settings.xml, clean package, clean test, publich Artifact - Self Hosted Agent '  
+  jobs:
+    - job: Maven_Build_Artifacts_Prod 
+      pool:
+        name: SelfHostedAgentPool
+        demands: maven
+      steps:
+#  pool:
+#    name: SelfHostedAgentPool
+#    demands: maven
+#  jobs:
+#    - job: Maven 
+#      condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/prod'))
+#      steps:
+
+        - task: MavenAuthenticate@0
+          displayName: Authenticate Maven
+          inputs:
+            artifactsFeeds: "Berlin"
+
+        # Download settings.xml file
+        - task: DownloadSecureFile@1
+          name: mvnSettings
+          displayName: 'Download Maven settings'
+          inputs:
+            secureFile: 'settings.xml'
+
+
+        - task: Maven@3
+          displayName: MavenCleanPackage
+          inputs:
+            mavenPomFile: 'pom.xml'
+            options: '-DskipTests=true -DattachMuleSources -e'
+            mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+            mavenVersionOption: 'path' # 'Default' # Options: default, path
+            mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+            mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+            mavenFeedAuthenticate: false
+            javaHomeOption: path # 'JDKVersion'
+            jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+            #jdkVersionOption: '1.8'
+            jdkArchitectureOption: 'x64'
+            publishJUnitResults: false
+            testResultsFiles: '**/TEST-*.xml'
+            goals: 'clean package'          
+
+        - task: PublishPipelineArtifact@1
+          displayName: 'Create $(ARTIFACT_NAME)-PROD'
+          inputs:
+            artifact: '$(ARTIFACT_NAME)-PROD'
+
+        - task: Maven@3
+          displayName: MUnit
+          inputs:
+            mavenPomFile: 'pom.xml'
+            options: '-DskipTests=true -DattachMuleSources'
+            mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+            mavenVersionOption: 'path' # 'Default' # Options: default, path
+            mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+            mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+            mavenFeedAuthenticate: false
+            javaHomeOption: path # 'JDKVersion'
+            jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+            #jdkVersionOption: '1.8'
+            jdkArchitectureOption: 'x64'
+            publishJUnitResults: false
+            testResultsFiles: '**/TEST-*.xml'
+            goals: 'clean test'          
+            
+- stage: DeployToCloudhubFromProductionEnvironment
+  condition: eq(variables.isProd, 'true')
+  dependsOn: RunMavenOnSelfHostedMachineforProd
+  displayName: Berlin Deploy to Production CloudHub
+  variables: 
+  - group: ConnectedApp-VG-CRM-Dev
+  jobs:
+  - deployment: DeployProduction
+    pool: 
+      name: SelfHostedAgentPool
+
+    environment: Production
+##  - job: publishinternala
+##    displayName: 'Publish packages to Prod Azure environemtn'
+##    environment: 'Production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+#            - download: none
+            - script: echo Deploying to ProductionEnvironment '$(BUSINESS_GROUP)' '$(conapp.clientId)'
+
+            # Download settings.xml file
+            - task: DownloadSecureFile@1
+              name: mvnSettings
+              displayName: 'Download Maven settings'
+              inputs:
+                secureFile: 'settings.xml'
+
+            - task: Maven@3
+              displayName: Deploy
+              inputs:
+                mavenPomFile: 'pom.xml'
+                #options: '-s $(System.DefaultWorkingDirectory)/$(Release.PrimaryArtifactSourceAlias)/$(Release.PrimaryArtifactSourceAlias)-artifact-PROD/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(Release.PrimaryArtifactSourceAlias)/$(Release.PrimaryArtifactSourceAlias)-artifact-PROD/s/target -DskipTests=true -Dmule.env=prod -Danypoint.platform.gatekeeper=disabled -DapplicationName="$(Release.PrimaryArtifactSourceAlias)-PROD" -Dserver=$(server) -DmuleVersion=$(muleVersion) -DbusinessGroup="Application Development" -Dworkers=$(workers) -DworkerType=$(workerType) -Denvironment=$(environment) -Dapplication.runtime.key=$(encrypt.key) -Dapi.id=99999  -Danypoint.platform.client_id=$(anypoint.platform.client_id) -Danypoint.platform.client_secret=$(anypoint.platform.client_secret) -Dconapp.clientId=$(conapp.clientId) -Dconapp.clientSecret=$(conapp.clientSecret)'
+                #options: '-s $(System.DefaultWorkingDirectory)/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(artifact.name)-STAGE/s/target -DskipTests=true -Dmule.env=stage -Danypoint.platform.gatekeeper=disabled -DapplicationName="$(artifact.name)-STAGE" -Dserver=$(server) -DmuleVersion=$(muleVersion) -DbusinessGroup="Application Development" -Dworkers=$(workers) -DworkerType=$(workerType) -Denvironment=$(environment) -Dapplication.runtime.key=$(encrypt.key) -Dapi.id=99999  -Danypoint.platform.client_id=$(anypoint.platform.client_id) -Danypoint.platform.client_secret=$(anypoint.platform.client_secret) -Dconapp.clientId=$(conapp.clientId) -Dconapp.clientSecret=$(conapp.clientSecret)'
+                options: '-s $(agent.tempDirectory)/settings.xml -DmuleDeploy -Dartifact=$(System.DefaultWorkingDirectory)/$(ARTIFACT_NAME)-PROD/s/target -DapplicationName=$(PRIMARY_ARTIFACT_SOURCE_ALIAS) -DskipTests=true -Dmule.env=prod -Danypoint.platform.gatekeeper=$(ANYPOINT_PLATFORM_GATEKEEPER)  -Dserver=$(SERVER) -DmuleVersion=$(MULE_VERSION) -DbusinessGroup="$(BUSINESS_GROUP)" -Dworkers=$(WORKERS) -DworkerType=$(WORKER_TYPE) -Denvironment=$(ENVIRONMENT) -Dapplication.runtime.key="$(application.runtime.key.prod)" -Dapplication.runtime.username=$(application.runtime.username.prod) -Dapplication.runtime.password=$(application.runtime.password.prod) -Dconapp.clientId=$(conapp.clientId) -Dconapp.clientSecret=$(conapp.clientSecret)'
+                mavenOptions: '-Xmx3072m $(MAVEN_OPTS)'
+                mavenVersionOption: 'path' # 'Default' # Options: default, path
+                mavenDirectory: 'C:\Maven\apache-maven-3.6.3\bin\' # Required when mavenVersionOption == Path
+                mavenSetM2Home: 'true' # Required when mavenVersionOption == Path            
+                mavenFeedAuthenticate: false
+                javaHomeOption: path # 'JDKVersion'
+                jdkDirectory: 'C:\Program Files\Java\jdk-11.0.10'
+                #jdkVersionOption: '1.8'
+                jdkArchitectureOption: 'x64'
+                publishJUnitResults: false
+                testResultsFiles: '**/TEST-*.xml'
+                goals: 'package deploy'
